@@ -1,3 +1,0 @@
-Instruction: Extract judicial factors relevant to evaluating consent in intimate relationship allegations.
-Context: The Court assessed whether consent was vitiated.
-Output: {"clauses_found": ["Voluntariness of participation", "Contemporaneous conduct of parties", "Intent at the time of alleged inducement"]}

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os
+import re
 import json
+import shutil
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
@@ -26,7 +28,6 @@ from sentence_transformers import SentenceTransformer, CrossEncoder
 
 # -------- LCEL --------
 from langchain_community.llms import HuggingFacePipeline
-from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -36,6 +37,7 @@ from langchain_core.chat_history import InMemoryChatMessageHistory
 # CONFIG
 # =====================================
 DATA_DIR = "data"
+UPLOADS_DIR = "uploads"
 INDEX_DIR = "index_data"
 CHUNK_DIR = f"{INDEX_DIR}/chunks"
 
@@ -52,6 +54,7 @@ TOP_DENSE = 20
 FINAL_TOPK = 5
 
 os.makedirs(CHUNK_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # =====================================
 # LOAD MODELS
@@ -93,13 +96,73 @@ pipe = pipeline(
     tokenizer=tokenizer,
     max_new_tokens=200,
     temperature=0.2,
-    return_full_text=False   # VERY IMPORTANT
+    return_full_text=False
 )
-
 
 llm = HuggingFacePipeline(pipeline=pipe)
 
 print("✅ Model Ready\n")
+
+# =====================================
+# DOCX EXTRACTION
+# =====================================
+def extract_docx(path: Path) -> str:
+    """Extract plain text from a .docx file."""
+    try:
+        import docx
+        doc = docx.Document(str(path))
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        # Also extract tables
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = " | ".join(
+                    cell.text.strip() for cell in row.cells if cell.text.strip()
+                )
+                if row_text:
+                    paragraphs.append(row_text)
+        return "\n".join(paragraphs)
+    except Exception as e:
+        print(f"⚠️  Could not read {path.name}: {e}")
+        return ""
+
+# =====================================
+# SYNC UPLOADS → DATA
+# =====================================
+def sync_uploads_to_data():
+    """
+    Copy newly uploaded files from uploads/ into data/
+    so the RAG indexer can find them.
+    Supported: .txt  .md  .pdf  .docx
+    For .docx: extract text and save as .txt in data/
+    """
+    uploads_dir = Path(UPLOADS_DIR)
+    data_dir = Path(DATA_DIR)
+    data_dir.mkdir(exist_ok=True)
+
+    if not uploads_dir.exists():
+        return
+
+    supported = {".txt", ".md", ".pdf", ".docx"}
+
+    for f in uploads_dir.rglob("*"):
+        if not f.is_file():
+            continue
+        if f.suffix.lower() not in supported:
+            continue
+
+        if f.suffix.lower() == ".docx":
+            # Save extracted text as .txt so indexer can read it
+            dest = data_dir / (f.stem + "_docx.txt")
+            if not dest.exists():
+                text = extract_docx(f)
+                if text.strip():
+                    dest.write_text(text, encoding="utf-8")
+                    print(f"📥 Extracted & synced: {f.name} → {dest.name}")
+        else:
+            dest = data_dir / f.name
+            if not dest.exists():
+                shutil.copy2(f, dest)
+                print(f"📥 Synced: {f.name}")
 
 # =====================================
 # INDEXING
@@ -107,14 +170,17 @@ print("✅ Model Ready\n")
 def chunk_text(text):
     i = 0
     while i < len(text):
-        yield text[i:i+CHUNK_SIZE].strip()
+        yield text[i:i + CHUNK_SIZE].strip()
         i += CHUNK_SIZE - OVERLAP
 
 
 def index_documents():
     print("📚 Indexing documents...")
-    files = list(Path(DATA_DIR).rglob("*"))
 
+    # Always sync uploads before indexing
+    sync_uploads_to_data()
+
+    files = list(Path(DATA_DIR).rglob("*"))
     meta, corpus, vectors = [], [], []
     cid = 0
 
@@ -122,7 +188,15 @@ def index_documents():
         if not f.is_file():
             continue
 
-        text = f.read_text(errors="ignore")
+        # Read text based on file type
+        suffix = f.suffix.lower()
+        if suffix == ".docx":
+            text = extract_docx(f)
+        else:
+            text = f.read_text(errors="ignore")
+
+        if not text.strip():
+            continue
 
         for chunk in chunk_text(text):
             if not chunk:
@@ -141,6 +215,10 @@ def index_documents():
             vectors.append(chunk)
             cid += 1
 
+    if cid == 0:
+        print("⚠️  No documents found to index.")
+        return
+
     embeddings = embedder.encode(vectors, convert_to_numpy=True)
     index = faiss.IndexFlatL2(embeddings.shape[1])
     index.add(embeddings.astype(np.float32))
@@ -149,19 +227,86 @@ def index_documents():
     json.dump(corpus, open(f"{INDEX_DIR}/bm25.json", "w"))
     json.dump(meta, open(f"{INDEX_DIR}/meta.json", "w"))
 
-    print(f"✅ Indexed {cid} chunks")
+    print(f"✅ Indexed {cid} chunks from {len(files)} files")
 
 # =====================================
-# HYBRID RETRIEVER FUNCTION
+# ANSWER PARSER
+# =====================================
+def parse_answer(raw: str) -> str:
+    """
+    Clean up raw Mistral output.
+    Handles: JSON strings, Output: prefix, leaked chat history.
+    """
+    raw = raw.strip()
+
+    # ADD THIS — remove "Answer:" prefix
+    if raw.startswith("Answer:"):
+        raw = raw[len("Answer:"):].strip()
+
+    # Remove 'Output:' prefix
+    if raw.startswith("Output:"):
+        raw = raw[len("Output:"):].strip()
+
+    # Try full JSON parse → extract 'answer' field
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict) and "answer" in data:
+            return data["answer"].strip()
+    except Exception:
+        pass
+
+    # Try regex for {"answer": "..."} pattern (handles truncated JSON)
+    match = re.search(r'"answer"\s*:\s*"(.*?)"(?:\s*,|\s*\})', raw, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Strip leaked Question:/Output: history blocks
+    lines = raw.split("\n")
+    clean_lines = []
+    skip = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("Question:") or stripped.startswith("Output:"):
+            skip = True
+            continue
+        if skip and stripped == "":
+            skip = False
+            continue
+        if not skip:
+            clean_lines.append(line)
+
+    cleaned = "\n".join(clean_lines).strip()
+    if cleaned:
+        return cleaned
+
+    return raw
+
+# =====================================
+# HYBRID RETRIEVER
 # =====================================
 def hybrid_retrieve(query):
+    # Sync any new uploads and re-index if needed
+    sync_uploads_to_data()
 
     if not Path(f"{INDEX_DIR}/faiss.index").exists():
         index_documents()
 
+    # Check if new files appeared since last index
+    data_files = set(f.name for f in Path(DATA_DIR).rglob("*") if f.is_file())
+    meta_path = Path(f"{INDEX_DIR}/meta.json")
+    if meta_path.exists():
+        meta = json.load(open(meta_path))
+        indexed_files = set(m["doc"] for m in meta)
+        if data_files - indexed_files:
+            print("🔄 New files detected, re-indexing...")
+            index_documents()
+    
     index = faiss.read_index(f"{INDEX_DIR}/faiss.index")
     corpus = json.load(open(f"{INDEX_DIR}/bm25.json"))
     meta = json.load(open(f"{INDEX_DIR}/meta.json"))
+
+    if not corpus:
+        return "No documents have been indexed yet."
 
     bm25 = BM25Okapi([c.split() for c in corpus])
     bm25_ids = np.argsort(
@@ -195,16 +340,16 @@ def hybrid_retrieve(query):
 
     return "\n\n".join(docs)
 
-# Wrap retriever as Runnable
-retriever_runnable = RunnableLambda(
-    lambda inputs: hybrid_retrieve(inputs["question"])
-)
-
 # =====================================
 # PROMPT
 # =====================================
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a legal AI assistant. If the question is not related to legal topics, respond normally without using context."),
+    (
+        "system",
+        "You are a legal AI assistant. Answer questions based on the provided context. "
+        "Be concise and direct. Do not output JSON. Do not repeat the question. "
+        "If the context does not contain the answer, say so clearly."
+    ),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "Context:\n{context}\n\nQuestion:\n{question}")
 ])
@@ -221,7 +366,7 @@ rag_chain = (
 )
 
 # =====================================
-# MEMORY (LCEL WAY)
+# MEMORY
 # =====================================
 store = {}
 
@@ -242,12 +387,10 @@ chain_with_memory = RunnableWithMessageHistory(
 # =====================================
 def main():
     print("🧠 Pure LCEL Legal RAG Ready\n")
-
     session_id = "legal-session"
 
     while True:
         query = input(">> ")
-
         if query.lower() == "exit":
             break
 
@@ -257,7 +400,7 @@ def main():
         )
 
         print("\n📄 RESPONSE\n")
-        print(response)
+        print(parse_answer(str(response)))
 
 if __name__ == "__main__":
     main()

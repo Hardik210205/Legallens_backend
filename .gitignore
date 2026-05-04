@@ -1,10 +1,22 @@
-.env
-.env.local
+# Python
+venv/
 __pycache__/
 *.pyc
 *.pyo
-venv/
-legalens/
+
+# Environment
+.env
+.env.*
+
+# Data & indexes
+data/
+index_data/
+uploads/
 models/
-*.egg-info/
+
+# Frontend (separate repo)
+frontend/
+
+# Misc
+*.log
 .DS_Store

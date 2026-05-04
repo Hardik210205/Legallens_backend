@@ -1,3 +1,0 @@
-Instruction: Extract grounds commonly relied upon for filing a B-Summary report.
-Context: The investigating officer concluded that the allegations were false.
-Output: {"clauses_found": ["Absence of accused at alleged locations", "Contradictory or delayed complaint", "Lack of corroborative evidence"]}

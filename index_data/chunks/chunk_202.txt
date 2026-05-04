@@ -1,3 +1,0 @@
-Instruction: Identify evidentiary risks when medical evidence is inconsistent with injury allegations.
-Context: Medical testimony supports classification of injuries.
-Output: {"obligations": ["Correlate medical findings with witness accounts", "Clarify nature and extent of injuries"], "risks": ["Downgrading of charges", "Acquittal due to evidentiary gaps"]}

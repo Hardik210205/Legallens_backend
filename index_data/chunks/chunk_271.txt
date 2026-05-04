@@ -1,3 +1,0 @@
-Instruction: Assess risks when allegations are reframed after an initial consensual relationship deteriorates.
-Context: The Court evaluated evolving narratives over time.
-Output: {"obligations": ["Maintain consistency in allegations", "Provide corroboration for later claims"], "risks": ["Perception of afterthought", "Reduced evidentiary credibility"]}

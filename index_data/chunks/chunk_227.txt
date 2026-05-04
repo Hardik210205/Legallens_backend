@@ -1,3 +1,0 @@
-Instruction: Extract elements required to establish criminal defamation.
-Context: Defamation protects individual reputation.
-Output: {"clauses_found": ["Imputation concerning a person", "Intention or knowledge of reputational harm", "Communication to third parties"]}

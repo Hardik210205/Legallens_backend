@@ -1,3 +1,0 @@
-Instruction: Extract principles supporting preventive criminal liability.
-Context: Early intervention mechanisms exist in security laws.
-Output: {"clauses_found": ["Criminalization of preparatory acts", "Liability for support and facilitation", "Punishment for attempts and conspiracies"]}

@@ -1,3 +1,0 @@
-Instruction: Explain how courts differentiate criminal attempt from mere preparation.
-Context: Attempt provisions penalize near-completion conduct.
-Output: {"answer": "An attempt involves a direct act toward commission after preparation, demonstrating clear proximity and intent.", "confidence": "high"}

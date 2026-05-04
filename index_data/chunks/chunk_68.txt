@@ -1,3 +1,0 @@
-Instruction: Extract elements required to establish offences involving unlawful assemblies.
-Context: Group offences require specific components.
-Output: {"clauses_found": ["Assembly of multiple persons", "Common object to commit unlawful acts", "Use or threat of force"]}

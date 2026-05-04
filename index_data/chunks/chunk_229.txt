@@ -1,3 +1,0 @@
-Instruction: Assess legal risks when threats are communicated during personal or business disputes.
-Context: Threats may escalate disputes into criminal cases.
-Output: {"obligations": ["Assess intention to cause alarm", "Distinguish negotiation from coercion"], "risks": ["Criminalization of aggressive bargaining", "Evidentiary disputes over intent"]}

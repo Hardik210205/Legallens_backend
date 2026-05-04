@@ -1,3 +1,0 @@
-Instruction: Identify legal risks when conduct crosses from preparation into attempt.
-Context: Attempt attracts penal consequences.
-Output: {"obligations": ["Assess proximity to the intended offence", "Evaluate unequivocal intent"], "risks": ["Criminal liability despite non-completion", "Severe penalties for near-completed offences"]}

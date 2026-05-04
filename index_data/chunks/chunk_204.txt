@@ -1,3 +1,0 @@
-Instruction: Analyze how sudden provocation affects criminal liability in homicide cases.
-Context: Provocation operates as a mitigating factor.
-Output: {"answer": "Sudden and grave provocation may reduce culpability by negating premeditated intent, subject to strict statutory conditions.", "confidence": "high"}

@@ -1,3 +1,0 @@
-Instruction: Extract the legally recognized modes through which abetment may occur.
-Context: Abetment extends beyond direct acts.
-Output: {"clauses_found": ["Instigation of an offence", "Engagement in conspiracy", "Intentional aiding through acts or omissions"]}

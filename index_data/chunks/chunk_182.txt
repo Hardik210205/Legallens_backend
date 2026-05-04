@@ -1,3 +1,0 @@
-Instruction: Analyze how the Constitution balances power between the Union and the States.
-Context: Federal distribution of powers is constitutionally defined.
-Output: {"answer": "The Constitution balances authority by allocating subjects across Union, State, and Concurrent domains while preserving national unity.", "confidence": "high"}

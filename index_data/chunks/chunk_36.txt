@@ -1,3 +1,0 @@
-Instruction: Assess risks associated with disproportionate sentencing.
-Context: Sentencing discretion must align with statutory limits.
-Output: {"obligations": ["Ensure proportionality", "Consider statutory sentencing frameworks"], "risks": ["Arbitrary punishment", "Violation of constitutional safeguards"]}

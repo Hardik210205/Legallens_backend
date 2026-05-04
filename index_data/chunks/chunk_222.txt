@@ -1,3 +1,0 @@
-Instruction: Provide a structured summary of offences affecting State security under criminal law.
-Context: The IPC addresses acts undermining governmental authority.
-Output: {"topic_name": "Offences Against the State under IPC", "parties_involved": ["Accused persons", "Government authorities", "Courts"], "acts_and_clause_involved": ["Sections 121–130 IPC"], "risk_obligations_perks": {"obligations": "Prove intent to destabilize State authority", "risks": "Overbroad application affecting civil liberties", "benefits": "Protection of national sovereignty"}, "summary": "The IPC criminalizes acts threatening the State while requiring careful balancing with constitutional freedoms."}

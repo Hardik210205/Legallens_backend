@@ -1,3 +1,0 @@
-Instruction: Explain why giving false evidence is treated as a serious criminal offence.
-Context: Truthful testimony underpins justice delivery.
-Output: {"answer": "False evidence corrupts judicial decision-making, risks wrongful convictions or acquittals, and undermines confidence in the justice system.", "confidence": "high"}

@@ -1,3 +1,0 @@
-Instruction: Analyze the mental element required to establish forgery.
-Context: Forgery depends on intent rather than mere error.
-Output: {"answer": "Forgery requires intentional creation or alteration of a document with the purpose of deception or causing legal harm.", "confidence": "high"}

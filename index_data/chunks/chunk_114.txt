@@ -1,3 +1,0 @@
-Instruction: Analyze why facts supporting or contradicting expert opinion may still be relevant.
-Context: Expert conclusions are evaluated alongside surrounding facts.
-Output: {"answer": "Supporting or contradictory facts help courts assess the reliability and weight of expert opinions rather than accepting them unquestioningly.", "confidence": "high"}

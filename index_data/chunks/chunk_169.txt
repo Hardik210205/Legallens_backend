@@ -1,3 +1,0 @@
-Instruction: Assess constitutional risks associated with impeachment of the President.
-Context: The Constitution provides a procedure for presidential removal.
-Output: {"obligations": ["Follow strict procedural requirements", "Ensure bipartisan legislative support"], "risks": ["Political instability", "Constitutional crisis if misused"]}

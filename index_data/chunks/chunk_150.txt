@@ -1,3 +1,0 @@
-Instruction: Determine risks associated with State-funded promotion of religion.
-Context: Fiscal neutrality toward religion is constitutionally mandated.
-Output: {"obligations": ["Avoid allocating tax revenue for religious promotion"], "risks": ["Violation of secular principles", "Judicial invalidation of funding schemes"]}

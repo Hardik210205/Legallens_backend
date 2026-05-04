@@ -1,3 +1,0 @@
-Instruction: Extract categories of conduct that undermine administration of justice.
-Context: The Code protects judicial processes.
-Output: {"clauses_found": ["False evidence and perjury", "Intentional insult or interruption of judicial proceedings", "Disappearance or fabrication of evidence"]}

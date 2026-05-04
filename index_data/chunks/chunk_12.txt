@@ -1,3 +1,0 @@
-Instruction: Explain the evidentiary threshold required for quashing cheque dishonour complaints at the pre-trial stage.
-Context: The Court discusses the narrow scope of interference under inherent jurisdiction.
-Output: {"answer": "Quashing is permissible only when allegations fail even if taken at face value, or when incontrovertible material completely negates the accused’s liability.", "confidence": "high"}
