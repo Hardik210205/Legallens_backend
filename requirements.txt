@@ -1,35 +1,18 @@
-# ---------------- Core ----------------
-python-dotenv==1.0.0
-numpy==1.26.4
-tqdm==4.66.1
-
-# ---------------- OCR ----------------
-pdfplumber==0.10.3
-pdf2image==1.17.0
-pytesseract==0.3.10
-Pillow==10.2.0
-
-# ---------------- Retrieval ----------------
-rank-bm25==0.2.2
-sentence-transformers==2.6.1
-
-# ---------------- Transformers & HF ----------------
-transformers>=4.42.0
-accelerate>=0.28.0
-safetensors==0.4.2
-huggingface-hub>=0.25.0
-tokenizers>=0.19.1
-peft
-protobuf==4.25.3
-regex==2023.12.25
-requests>=2.32.5   # ✅ FIXED
-
-# ---------------- LangChain Ecosystem ----------------
-langchain==1.2.10
-langchain-core==1.2.13
-langchain-text-splitters==1.1.0
-langchain-community==0.4.1
-
-# ---------------- Runtime ----------------
-bitsandbytes==0.43.0
-scipy==1.12.0
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+python-dotenv
+requests
+faiss-cpu
+rank_bm25
+sentence-transformers
+langchain
+langchain-core
+langchain-community
+numpy
+tqdm
+python-docx
