@@ -15,4 +15,6 @@ langchain-core
 langchain-community
 numpy
 tqdm
-python-docxaiofiles
+python-docx
+aiofiles
+bcrypt==4.0.1
