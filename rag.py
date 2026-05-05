@@ -11,11 +11,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 # -------- Retrieval --------
 import faiss
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer, CrossEncoder
 
 # -------- Memory --------
 from langchain_core.chat_history import InMemoryChatMessageHistory
@@ -28,11 +28,13 @@ UPLOADS_DIR = "uploads"
 INDEX_DIR = "index_data"
 CHUNK_DIR = f"{INDEX_DIR}/chunks"
 
-EMB_MODEL = "all-MiniLM-L6-v2"
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# HF Embedding API
+HF_EMB_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+HF_EMB_URL = f"https://router.huggingface.co/hf-inference/models/{HF_EMB_MODEL}"
 
-HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
-HF_API_URL = "https://router.huggingface.co/featherless-ai/v1/chat/completions"
+# Groq LLM API
+GROQ_MODEL = "llama3-8b-8192"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 CHUNK_SIZE = 3000
 OVERLAP = 300
@@ -43,31 +45,64 @@ FINAL_TOPK = 5
 os.makedirs(CHUNK_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# =====================================
-# LAZY MODEL LOADING
-# Models only load on first request, not at startup
-# This keeps Railway memory under 512MB during boot
-# =====================================
-embedder = None
-reranker = None
-
-def get_models():
-    global embedder, reranker
-    if embedder is None:
-        print("🔄 Loading retrieval models...")
-        embedder = SentenceTransformer(EMB_MODEL)
-        reranker = CrossEncoder(RERANK_MODEL)
-        print("✅ Retrieval models ready")
-    return embedder, reranker
-
+print("✅ LegalLens RAG Ready (API-based, no local models)")
 
 # =====================================
-# HF INFERENCE API CALL
+# HF EMBEDDING API
 # =====================================
-def call_hf_api(messages: list) -> str:
+def get_embeddings(texts: list) -> np.ndarray:
+    """Get embeddings from HF API."""
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    
+    try:
+        response = requests.post(
+            HF_EMB_URL,
+            headers=headers,
+            json={"inputs": texts, "options": {"wait_for_model": True}},
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if isinstance(result, list):
+                return np.array(result, dtype=np.float32)
+        
+        # Fallback to simple TF-IDF style embeddings if API fails
+        print(f"⚠️ Embedding API failed ({response.status_code}), using fallback")
+        return fallback_embeddings(texts)
+        
+    except Exception as e:
+        print(f"⚠️ Embedding error: {e}, using fallback")
+        return fallback_embeddings(texts)
+
+
+def fallback_embeddings(texts: list) -> np.ndarray:
+    """Simple hash-based fallback embeddings when API unavailable."""
+    dim = 384
+    embeddings = []
+    for text in texts:
+        words = text.lower().split()
+        vec = np.zeros(dim, dtype=np.float32)
+        for i, word in enumerate(words[:dim]):
+            vec[hash(word) % dim] += 1.0
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+        embeddings.append(vec)
+    return np.array(embeddings, dtype=np.float32)
+
+
+# =====================================
+# GROQ LLM API
+# =====================================
+def call_llm(messages: list) -> str:
+    """Call Groq API for fast LLM inference."""
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
     payload = {
-        "model": HF_MODEL,
+        "model": GROQ_MODEL,
         "messages": messages,
         "max_tokens": 300,
         "temperature": 0.2
@@ -75,39 +110,46 @@ def call_hf_api(messages: list) -> str:
 
     try:
         response = requests.post(
-            HF_API_URL,
+            GROQ_API_URL,
             headers=headers,
             json=payload,
-            timeout=120
+            timeout=30
         )
 
-        if response.status_code == 503:
-            import time
-            try:
-                wait_time = response.json().get("estimated_time", 30)
-            except Exception:
-                wait_time = 30
-            print(f"⏳ Model loading, waiting {wait_time:.0f}s...")
-            time.sleep(min(wait_time, 60))
-            response = requests.post(
-                HF_API_URL,
-                headers=headers,
-                json=payload,
-                timeout=120
-            )
-
         if response.status_code == 200:
-            result = response.json()
-            if "choices" in result and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"].strip()
-            return str(result)
+            return response.json()["choices"][0]["message"]["content"].strip()
 
-        return f"API Error {response.status_code}: {response.text}"
+        # Fallback to HF featherless if Groq fails
+        print(f"⚠️ Groq failed ({response.status_code}), trying HF...")
+        return call_hf_fallback(messages)
 
     except requests.exceptions.Timeout:
         return "Request timed out. Please try again."
     except Exception as e:
-        return f"Error calling HF API: {str(e)}"
+        return f"Error: {str(e)}"
+
+
+def call_hf_fallback(messages: list) -> str:
+    """Fallback to HF featherless-ai if Groq unavailable."""
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {
+        "model": "mistralai/Mistral-7B-Instruct-v0.2",
+        "messages": messages,
+        "max_tokens": 300,
+        "temperature": 0.2
+    }
+    try:
+        response = requests.post(
+            "https://router.huggingface.co/featherless-ai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+        return f"API Error {response.status_code}: {response.text[:200]}"
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 # =====================================
@@ -200,7 +242,6 @@ def chunk_text(text):
 
 
 def index_documents():
-    emb, _ = get_models()
     print("📚 Indexing documents...")
     sync_uploads_to_data()
 
@@ -242,7 +283,8 @@ def index_documents():
         print("⚠️  No documents found to index.")
         return
 
-    embeddings = emb.encode(vectors, convert_to_numpy=True)
+    print("🔢 Computing embeddings via HF API...")
+    embeddings = get_embeddings(vectors)
     index = faiss.IndexFlatL2(embeddings.shape[1])
     index.add(embeddings.astype(np.float32))
 
@@ -259,8 +301,11 @@ def index_documents():
 def parse_answer(raw: str) -> str:
     raw = raw.strip()
 
-    if raw.startswith("Answer:"):
-        raw = raw[len("Answer:"):].strip()
+    for prefix in ["Answer:", "answer:", "\nAnswer:"]:
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):].strip()
+            break
+
     if raw.startswith("Output:"):
         raw = raw[len("Output:"):].strip()
 
@@ -275,24 +320,6 @@ def parse_answer(raw: str) -> str:
     if match:
         return match.group(1).strip()
 
-    lines = raw.split("\n")
-    clean_lines = []
-    skip = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("Question:") or stripped.startswith("Output:"):
-            skip = True
-            continue
-        if skip and stripped == "":
-            skip = False
-            continue
-        if not skip:
-            clean_lines.append(line)
-
-    cleaned = "\n".join(clean_lines).strip()
-    if cleaned:
-        return cleaned
-
     return raw
 
 
@@ -300,9 +327,6 @@ def parse_answer(raw: str) -> str:
 # HYBRID RETRIEVER
 # =====================================
 def hybrid_retrieve(query):
-    # Lazy load models on first request
-    emb, rerank = get_models()
-
     sync_uploads_to_data()
 
     if not Path(f"{INDEX_DIR}/faiss.index").exists():
@@ -328,32 +352,24 @@ def hybrid_retrieve(query):
     if not corpus:
         return "No documents have been indexed yet."
 
+    # BM25 retrieval
     bm25 = BM25Okapi([c.split() for c in corpus])
     bm25_ids = np.argsort(
         bm25.get_scores(query.split())
     )[::-1][:TOP_BM25]
 
-    q_emb = emb.encode([query], convert_to_numpy=True)
+    # Dense retrieval via HF embedding API
+    q_emb = get_embeddings([query])
     _, dense_ids = index.search(q_emb.astype(np.float32), TOP_DENSE)
 
     candidates = list(set(bm25_ids.tolist() + dense_ids[0].tolist()))
 
-    texts, ids = [], []
-    for cid in candidates:
-        path = meta[cid]["path"]
-        texts.append(Path(path).read_text(errors="ignore"))
-        ids.append(cid)
-
-    scores = rerank.predict([[query, t[:512]] for t in texts])
-
-    ranked = sorted(
-        zip(ids, scores),
-        key=lambda x: x[1],
-        reverse=True
-    )[:FINAL_TOPK]
+    # Simple reranking by BM25 score (no CrossEncoder needed)
+    bm25_scores = bm25.get_scores(query.split())
+    ranked = sorted(candidates, key=lambda x: bm25_scores[x], reverse=True)[:FINAL_TOPK]
 
     docs = []
-    for cid, _ in ranked:
+    for cid in ranked:
         m = meta[cid]
         content = Path(m["path"]).read_text(errors="ignore")
         docs.append(content)
@@ -386,7 +402,7 @@ class RAGChain:
         history = get_session_history(session_id)
         context = hybrid_retrieve(question)
         prompt = build_prompt(question, context, history.messages)
-        raw_answer = call_hf_api(prompt)
+        raw_answer = call_llm(prompt)
         answer = parse_answer(raw_answer)
 
         history.add_user_message(question)
@@ -402,7 +418,7 @@ chain_with_memory = RAGChain()
 # MAIN LOOP
 # =====================================
 def main():
-    print("🧠 LegalLens RAG Ready (HF Inference API)\n")
+    print("🧠 LegalLens RAG Ready (Groq + HF Embeddings)\n")
     session_id = "legal-session"
 
     while True:
