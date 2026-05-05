@@ -9,12 +9,13 @@ python-dotenv
 requests
 faiss-cpu
 rank_bm25
-sentence-transformers
-langchain
-langchain-core
-langchain-community
 numpy
 tqdm
 python-docx
 aiofiles
 bcrypt==4.0.1
+langchain-core
+langchain-community
+langchain
+torch==2.1.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==2.7.0
