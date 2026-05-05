@@ -17,13 +17,8 @@ import faiss
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
-# -------- LCEL --------
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.runnables.history import RunnableWithMessageHistory
+# -------- Memory --------
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableLambda
 
 # =====================================
 # CONFIG
@@ -49,19 +44,27 @@ os.makedirs(CHUNK_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # =====================================
-# LOAD RETRIEVAL MODELS
-# (lightweight — no GPU needed)
+# LAZY MODEL LOADING
+# Models only load on first request, not at startup
+# This keeps Railway memory under 512MB during boot
 # =====================================
-print("🔄 Loading retrieval models...")
-embedder = SentenceTransformer(EMB_MODEL)
-reranker = CrossEncoder(RERANK_MODEL)
-print("✅ Retrieval models ready\n")
+embedder = None
+reranker = None
+
+def get_models():
+    global embedder, reranker
+    if embedder is None:
+        print("🔄 Loading retrieval models...")
+        embedder = SentenceTransformer(EMB_MODEL)
+        reranker = CrossEncoder(RERANK_MODEL)
+        print("✅ Retrieval models ready")
+    return embedder, reranker
+
 
 # =====================================
 # HF INFERENCE API CALL
 # =====================================
 def call_hf_api(messages: list) -> str:
-    """Call HuggingFace Inference API for Mistral."""
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     payload = {
         "model": HF_MODEL,
@@ -79,9 +82,11 @@ def call_hf_api(messages: list) -> str:
         )
 
         if response.status_code == 503:
-            # Model is loading — wait and retry once
             import time
-            wait_time = response.json().get("estimated_time", 30)
+            try:
+                wait_time = response.json().get("estimated_time", 30)
+            except Exception:
+                wait_time = 30
             print(f"⏳ Model loading, waiting {wait_time:.0f}s...")
             time.sleep(min(wait_time, 60))
             response = requests.post(
@@ -109,7 +114,6 @@ def call_hf_api(messages: list) -> str:
 # PROMPT BUILDER
 # =====================================
 def build_prompt(question: str, context: str, chat_history: list) -> list:
-    """Build Mistral instruct format prompt."""
     system = (
         "You are a legal AI assistant. Answer questions based on the provided context. "
         "Be concise and direct. Do not output JSON. Do not repeat the question. "
@@ -117,8 +121,7 @@ def build_prompt(question: str, context: str, chat_history: list) -> list:
     )
 
     messages = [{"role": "system", "content": system}]
-    
-    # Build history
+
     for msg in chat_history:
         if hasattr(msg, "type"):
             if msg.type == "human":
@@ -136,7 +139,6 @@ def build_prompt(question: str, context: str, chat_history: list) -> list:
 # DOCX EXTRACTION
 # =====================================
 def extract_docx(path: Path) -> str:
-    """Extract plain text from a .docx file."""
     try:
         import docx
         doc = docx.Document(str(path))
@@ -198,6 +200,7 @@ def chunk_text(text):
 
 
 def index_documents():
+    emb, _ = get_models()
     print("📚 Indexing documents...")
     sync_uploads_to_data()
 
@@ -239,7 +242,7 @@ def index_documents():
         print("⚠️  No documents found to index.")
         return
 
-    embeddings = embedder.encode(vectors, convert_to_numpy=True)
+    embeddings = emb.encode(vectors, convert_to_numpy=True)
     index = faiss.IndexFlatL2(embeddings.shape[1])
     index.add(embeddings.astype(np.float32))
 
@@ -297,11 +300,14 @@ def parse_answer(raw: str) -> str:
 # HYBRID RETRIEVER
 # =====================================
 def hybrid_retrieve(query):
+    # Lazy load models on first request
+    emb, rerank = get_models()
+
     sync_uploads_to_data()
 
     if not Path(f"{INDEX_DIR}/faiss.index").exists():
         index_documents()
-    
+
     if not Path(f"{INDEX_DIR}/faiss.index").exists():
         return "No documents have been indexed yet. Please upload a document first."
 
@@ -327,7 +333,7 @@ def hybrid_retrieve(query):
         bm25.get_scores(query.split())
     )[::-1][:TOP_BM25]
 
-    q_emb = embedder.encode([query], convert_to_numpy=True)
+    q_emb = emb.encode([query], convert_to_numpy=True)
     _, dense_ids = index.search(q_emb.astype(np.float32), TOP_DENSE)
 
     candidates = list(set(bm25_ids.tolist() + dense_ids[0].tolist()))
@@ -338,7 +344,7 @@ def hybrid_retrieve(query):
         texts.append(Path(path).read_text(errors="ignore"))
         ids.append(cid)
 
-    scores = reranker.predict([[query, t[:512]] for t in texts])
+    scores = rerank.predict([[query, t[:512]] for t in texts])
 
     ranked = sorted(
         zip(ids, scores),
@@ -367,15 +373,9 @@ def get_session_history(session_id: str):
 
 
 # =====================================
-# MAIN CHAIN (replaces LCEL + local LLM)
+# MAIN CHAIN
 # =====================================
 class RAGChain:
-    """
-    Drop-in replacement for chain_with_memory.
-    Uses HF Inference API instead of local Mistral.
-    Same interface: .invoke({"question": q}, config={"configurable": {"session_id": sid}})
-    """
-
     def invoke(self, inputs: dict, config: dict = None) -> str:
         question = inputs["question"]
         session_id = "default"
@@ -383,22 +383,12 @@ class RAGChain:
         if config and "configurable" in config:
             session_id = config["configurable"].get("session_id", "default")
 
-        # Get chat history
         history = get_session_history(session_id)
-
-        # Retrieve context
         context = hybrid_retrieve(question)
-
-        # Build prompt
         prompt = build_prompt(question, context, history.messages)
-
-        # Call HF API
         raw_answer = call_hf_api(prompt)
-
-        # Parse and clean
         answer = parse_answer(raw_answer)
 
-        # Save to memory
         history.add_user_message(question)
         history.add_ai_message(answer)
 
@@ -409,7 +399,7 @@ chain_with_memory = RAGChain()
 
 
 # =====================================
-# MAIN LOOP (for local testing)
+# MAIN LOOP
 # =====================================
 def main():
     print("🧠 LegalLens RAG Ready (HF Inference API)\n")
