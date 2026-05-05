@@ -15,4 +15,4 @@ langchain-core
 langchain-community
 numpy
 tqdm
-python-docx
+python-docxaiofiles
