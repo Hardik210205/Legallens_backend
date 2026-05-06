@@ -4,68 +4,87 @@ sys.path.insert(0, os.path.dirname(
     os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))))
 
-import re
-import json
 from rag import chain_with_memory
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
 from backend.auth import get_current_user
-from backend.models import User
-from backend.schemas import AskRequest, AskResponse
+from backend.database import get_db
+from backend.models import AskSession, Case, Message, User
+from backend.schemas import AskRequest, AskResponse, MessageOut
 
 router = APIRouter()
-
-def parse_answer(raw: str) -> str:
-    """Extract clean answer from raw Mistral output."""
-    # Remove 'Output:' prefix if present
-    raw = raw.strip()
-    if raw.startswith("Output:"):
-        raw = raw[len("Output:"):].strip()
-
-    # Try to parse as JSON and extract 'answer' field
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict) and "answer" in data:
-            return data["answer"]
-    except Exception:
-        pass
-
-    # Try regex for {"answer": "..."} pattern
-    match = re.search(r'"answer"\s*:\s*"(.*?)"(?:,|\})', raw, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    # Try to extract after Question:/Output: blocks (chat history leaking)
-    lines = raw.split("\n")
-    clean_lines = []
-    skip = False
-    for line in lines:
-        if line.strip().startswith("Question:") or line.strip().startswith("Output:"):
-            skip = True
-            continue
-        if skip and line.strip() == "":
-            skip = False
-            continue
-        if not skip:
-            clean_lines.append(line)
-    cleaned = "\n".join(clean_lines).strip()
-    if cleaned:
-        return cleaned
-
-    return raw
-
 
 @router.post("/", response_model=AskResponse)
 def ask(
     request: AskRequest,
-    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     try:
-        session_id = f"case-{request.case_id}"
-        response = chain_with_memory.invoke(
-            {"question": request.question},
-            config={"configurable": {"session_id": session_id}}
+        case = db.query(Case).filter(Case.id == request.case_id).first()
+        if case is None or case.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        session = (
+            db.query(AskSession)
+            .filter(
+                AskSession.case_id == request.case_id,
+                AskSession.user_id == current_user.id,
+            )
+            .first()
         )
-        answer = parse_answer(str(response))
+        if session is None:
+            session = AskSession(case_id=request.case_id, user_id=current_user.id)
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+
+        user_msg = Message(
+            session_id=session.id,
+            role="user",
+            content=request.question,
+        )
+        db.add(user_msg)
+        db.commit()
+
+        answer = chain_with_memory.invoke(
+            {"question": request.question},
+            config={"configurable": {"session_id": str(session.id)}}
+        )
+
+        assistant_msg = Message(
+            session_id=session.id,
+            role="assistant",
+            content=answer,
+        )
+        db.add(assistant_msg)
+        db.commit()
+
         return AskResponse(answer=answer)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/history/{case_id}", response_model=list[MessageOut])
+def get_history(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = (
+        db.query(AskSession)
+        .filter(AskSession.case_id == case_id, AskSession.user_id == current_user.id)
+        .first()
+    )
+    if session is None:
+        return []
+
+    return (
+        db.query(Message)
+        .filter(Message.session_id == session.id)
+        .order_by(Message.timestamp.asc())
+        .all()
+    )
